@@ -72,6 +72,7 @@ function Set-Reg {
     [ValidateSet('String', 'DWord', 'QWord')][string]$Type = 'DWord'
   )
 
+  Write-Host "Preparing registry change: $Path\$Name to $Value ($Type)" -ForegroundColor Gray
   # Check existing value
   $existingValue = $null
   try {
@@ -338,9 +339,13 @@ if ($EnableSection12) {
 # 13) UI: Taskbar Widgets
 #-------------------------------
 if ($EnableSection13) {
-  Write-Host "Hiding Widgets button on the taskbar..." -ForegroundColor Cyan
-  # Windows 11 uses 'TaskbarDa' for Widgets toggle
-  Set-Reg -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -Value 0
+  Write-Host "Disabling feed in Widgets panel..." -ForegroundColor Cyan
+
+  ## CAN NO LONGER DISABLE ENTIRELY IN WIN11
+  # # Windows 11 uses 'TaskbarDa' for Widgets toggle
+  # Set-Reg -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -Value 0
+
+  Set-Reg -Path "HKCU:\SOFTWARE\Policies\Microsoft\Dsh" -Name "AllowNewsFeed" -Value 0
 }
 
 #-------------------------------
@@ -348,7 +353,7 @@ if ($EnableSection13) {
 #-------------------------------
 if ($EnableSection14) {
   Write-Host @"
-[NOTE] Default browser changes are restricted by Windows 11's protected hash.
+  [NOTE] Default browser changes are restricted by Windows 11's protected hash.
 Please set your preferred browser manually:
   Settings → Apps → Default apps → <Your Browser> → Set for .htm, .html, HTTP, HTTPS.
 "@ -ForegroundColor Yellow
