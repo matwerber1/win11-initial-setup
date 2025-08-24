@@ -17,6 +17,11 @@
 #>
 
 #-------------------------------
+# Configuration
+#-------------------------------
+$CreateRestorePoint = $true  # Set to $false to skip restore point creation
+
+#-------------------------------
 # Helper: Require elevation
 #-------------------------------
 function Assert-Admin {
@@ -47,9 +52,9 @@ function Set-Reg {
     [Parameter(Mandatory)][string]$Path,
     [Parameter(Mandatory)][string]$Name,
     [Parameter(Mandatory)][Object]$Value,
-    [ValidateSet('String','DWord','QWord')][string]$Type='DWord'
+    [ValidateSet('String', 'DWord', 'QWord')][string]$Type = 'DWord'
   )
-  
+
   # Check existing value
   $existingValue = $null
   $existingType = $null
@@ -59,20 +64,22 @@ function Set-Reg {
       $existingValue = $existing.$Name
       $existingType = (Get-ItemProperty -Path $Path -Name $Name).PSObject.Properties[$Name].TypeNameOfValue
     }
-  } catch {}
-  
+  }
+  catch {}
+
   if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
-  
+
   switch ($Type) {
     'String' { New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType String -Force | Out-Null }
-    'DWord'  { New-ItemProperty -Path $Path -Name $Name -Value ([int]$Value) -PropertyType DWord -Force | Out-Null }
-    'QWord'  { New-ItemProperty -Path $Path -Name $Name -Value ([long]$Value) -PropertyType QWord -Force | Out-Null }
+    'DWord' { New-ItemProperty -Path $Path -Name $Name -Value ([int]$Value) -PropertyType DWord -Force | Out-Null }
+    'QWord' { New-ItemProperty -Path $Path -Name $Name -Value ([long]$Value) -PropertyType QWord -Force | Out-Null }
   }
-  
+
   # Log the change
-  if ($existingValue -ne $null) {
+  if ($null -ne $existingValue) {
     Write-RegLog "MODIFIED: $Path\$Name | Old: $existingValue ($existingType) | New: $Value ($Type)"
-  } else {
+  }
+  else {
     Write-RegLog "CREATED: $Path\$Name | Value: $Value ($Type)"
   }
 }
@@ -80,12 +87,35 @@ function Set-Reg {
 #-------------------------------
 # 0) Create a System Restore Point (if enabled)
 #-------------------------------
-Write-Host "Creating a system restore point (if supported)..." -ForegroundColor Cyan
-try {
-  Enable-ComputerRestore -Drive "C:\" -ErrorAction SilentlyContinue | Out-Null
-  Checkpoint-Computer -Description "Pre-privacy-security-baseline" -RestorePointType "MODIFY_SETTINGS"
-} catch {
-  Write-Warning "Could not create a restore point (service disabled or not supported). Continuing..."
+if ($CreateRestorePoint) {
+  Write-Host "Checking system restore point capability..." -ForegroundColor Cyan
+  try {
+    Enable-ComputerRestore -Drive "C:\" -ErrorAction SilentlyContinue | Out-Null
+    $lastRestore = Get-ComputerRestorePoint | Sort-Object CreationTime -Descending | Select-Object -First 1
+    $canCreate = $true
+
+    if ($lastRestore) {
+      $timeSince = (Get-Date) - $lastRestore.CreationTime
+      if ($timeSince.TotalMinutes -lt 1440) {
+        $remainingMinutes = [math]::Ceiling(1440 - $timeSince.TotalMinutes)
+        Write-Warning "Last restore point was created $([math]::Floor($timeSince.TotalMinutes)) minutes ago. Must wait $remainingMinutes more minutes."
+        $response = Read-Host "Continue without creating restore point? (y/N)"
+        $canCreate = $response -eq 'y' -or $response -eq 'Y'
+        if (-not $canCreate) { exit 1 }
+      }
+    }
+
+    if ($canCreate) {
+      Write-Host "Creating system restore point..." -ForegroundColor Cyan
+      Checkpoint-Computer -Description "Pre-privacy-security-baseline" -RestorePointType "MODIFY_SETTINGS"
+    }
+  }
+  catch {
+    Write-Warning "Could not create a restore point (service disabled or not supported). Continuing..."
+  }
+}
+else {
+  Write-Host "Skipping restore point creation (disabled by configuration)." -ForegroundColor Yellow
 }
 
 #-------------------------------
@@ -155,7 +185,8 @@ Write-Host "Configuring Microsoft Defender & SmartScreen..." -ForegroundColor Cy
 # Ensure real-time protection is enabled
 try {
   Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction Stop
-} catch { Write-Warning "Could not set real-time protection (permissions or policy). $_" }
+}
+catch { Write-Warning "Could not set real-time protection (permissions or policy). $_" }
 
 # Optional: Enable Controlled Folder Access (can break dev tools—enable cautiously)
 # Modes: Disabled/Enabled/AuditMode
@@ -163,10 +194,12 @@ $EnableCFA = $false  # Set $true if you want it ON by default
 try {
   if ($EnableCFA) {
     Set-MpPreference -EnableControlledFolderAccess Enabled
-  } else {
+  }
+  else {
     Set-MpPreference -EnableControlledFolderAccess Disabled
   }
-} catch { Write-Warning "Controlled Folder Access toggle failed: $_" }
+}
+catch { Write-Warning "Controlled Folder Access toggle failed: $_" }
 
 # SmartScreen for apps and files (system-wide)
 Set-Reg -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" -Name "EnableSmartScreen" -Value 1
@@ -178,8 +211,9 @@ Set-Reg -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" -Name "ShellSma
 #-------------------------------
 Write-Host "Enabling Windows Firewall for all profiles..." -ForegroundColor Cyan
 try {
-  Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled True
-} catch { Write-Warning "Failed to enforce firewall for all profiles: $_" }
+  Set-NetFirewallProfile -Profile Domain, Public, Private -Enabled True
+}
+catch { Write-Warning "Failed to enforce firewall for all profiles: $_" }
 
 #-------------------------------
 # 9) Security: BitLocker / Device Encryption
@@ -192,17 +226,20 @@ function Enable-IfBitLockerAvailable {
       $osVol = Get-BitLockerVolume -MountPoint "C:" -ErrorAction SilentlyContinue
       if ($osVol -and $osVol.ProtectionStatus -eq 'On') {
         Write-Host "BitLocker already enabled on C:."
-      } else {
+      }
+      else {
         Write-Host "Attempting to enable BitLocker on C: (used-space only, TPM)..." -ForegroundColor Yellow
         try {
           Enable-BitLocker -MountPoint "C:" -UsedSpaceOnly -TpmProtector -ErrorAction Stop
           Write-Host "BitLocker enable initiated. A reboot may be required to fully activate."
-        } catch {
+        }
+        catch {
           Write-Warning "BitLocker enable failed (edition, TPM, or policy). $_"
         }
       }
     }
-  } catch {
+  }
+  catch {
     Write-Host "BitLocker cmdlets not available (Windows edition may be Home). Skipping..."
   }
 }
