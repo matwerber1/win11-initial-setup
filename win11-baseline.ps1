@@ -67,6 +67,20 @@ function Set-Reg {
   }
   catch {}
 
+  # Convert new value to proper type for comparison
+  $newValue = switch ($Type) {
+    'String' { [string]$Value }
+    'DWord' { [int]$Value }
+    'QWord' { [long]$Value }
+  }
+
+  # Skip if value already matches
+  if ($null -ne $existingValue -and $existingValue -eq $newValue) {
+    $msg = "NO CHANGE: $Path\$Name already set to requested value of $Value ($Type)"
+    Write-RegLog "$msg"
+    return
+  }
+
   if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
 
   switch ($Type) {
@@ -77,10 +91,11 @@ function Set-Reg {
 
   # Log the change
   if ($null -ne $existingValue) {
-    Write-RegLog "MODIFIED: $Path\$Name | Old: $existingValue ($existingType) | New: $Value ($Type)"
+    $msg = "$msg"
   }
   else {
-    Write-RegLog "CREATED: $Path\$Name | Value: $Value ($Type)"
+    $msg = "CREATED: $Path\$Name | Value: $Value ($Type)"
+    Write-RegLog "$msg"
   }
 }
 
