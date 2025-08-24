@@ -19,7 +19,7 @@
 #-------------------------------
 # Configuration
 #-------------------------------
-$CreateRestorePoint = $true  # Set to $false to skip restore point creation
+$CreateRestorePoint = $false  # Set to $false to skip restore point creation
 
 #-------------------------------
 # Helper: Require elevation
@@ -92,32 +92,33 @@ if ($CreateRestorePoint) {
   try {
     Enable-ComputerRestore -Drive "C:\" -ErrorAction SilentlyContinue | Out-Null
     $lastRestore = Get-ComputerRestorePoint | Sort-Object CreationTime -Descending | Select-Object -First 1
-    $canCreate = $true
+    $continnueWithoutBackup = $false
 
     if ($lastRestore) {
-      $timeSince = (Get-Date) - $lastRestore.CreationTime
+      $timeSince = (Get-Date) - [System.Management.ManagementDateTimeConverter]::ToDateTime($lastRestore.CreationTime)
       if ($timeSince.TotalMinutes -lt 1440) {
         $remainingMinutes = [math]::Ceiling(1440 - $timeSince.TotalMinutes)
         Write-Warning "Last restore point was created $([math]::Floor($timeSince.TotalMinutes)) minutes ago. Must wait $remainingMinutes more minutes."
         $response = Read-Host "Continue without creating restore point? (y/N)"
-        $canCreate = $response -eq 'y' -or $response -eq 'Y'
-        if (-not $canCreate) { exit 1 }
+        $continnueWithoutBackup = $response -eq 'y' -or $response -eq 'Y'
+        if (-not $continnueWithoutBackup) { exit 1 }
+      }
+      else {
+        Write-Host "Creating system restore point..." -ForegroundColor Cyan
+        Checkpoint-Computer -Description "Pre-privacy-security-baseline" -RestorePointType "MODIFY_SETTINGS"
       }
     }
 
-    if ($canCreate) {
-      Write-Host "Creating system restore point..." -ForegroundColor Cyan
-      Checkpoint-Computer -Description "Pre-privacy-security-baseline" -RestorePointType "MODIFY_SETTINGS"
-    }
+
   }
   catch {
-    Write-Warning "Could not create a restore point (service disabled or not supported). Continuing..."
+    Write-Error "Failed to create restore point: $_"
+    exit 1
   }
 }
 else {
   Write-Host "Skipping restore point creation (disabled by configuration)." -ForegroundColor Yellow
 }
-
 #-------------------------------
 # 1) Privacy: Diagnostics & Feedback
 #-------------------------------
